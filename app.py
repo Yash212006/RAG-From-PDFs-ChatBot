@@ -14,106 +14,113 @@ import os
 from langchain_huggingface import HuggingFaceEmbeddings
 import streamlit as st
 
-load_dotenv()
-
-os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN")
-os.environ["GROQ_API_KEY2"] = os.getenv("GROQ_API_KEY2")
 
 st.title("RAG ChatBot")
 
-llm = ChatGroq(model= 'llama-3.1-8b-instant')
+st.sidebar.title("Settings")
+groq_api_key = st.sidebar.text_input("Enter your Groq API Key", type="password")
+hf_api_key = st.sidebar.text_input("Enter your Hugging Face API Key" ,type="password")
 
-session_id=st.text_input("Session ID",value="default_session")
 
-if 'store' not in st.session_state:
-    st.session_state.store = {}
+if not groq_api_key and not hf_api_key:
+    st.warning("Insert your API Keys")
 
-uploaded_files = st.file_uploader("Choose a PDF File " , type="pdf" , accept_multiple_files=True)
+if groq_api_key and hf_api_key:
 
-if uploaded_files:
-    documents = []
-    temppdf = "./temppdf.pdf"
-    for uploaded_file in uploaded_files:
-        with open(temppdf , "wb") as file:
-            file.write(uploaded_file.getvalue())
+    if 'store' not in st.session_state:
+        st.session_state.store = {}
+    
+    llm = ChatGroq(model= 'llama-3.1-8b-instant',api_key=groq_api_key)
+    session_id=st.text_input("Session ID",value="default_session")
+    uploaded_files = st.file_uploader("Choose a PDF File " , type="pdf" , accept_multiple_files=True)
+
+    if uploaded_files:
+        documents = []
+        temppdf = "./temppdf.pdf"
+        for uploaded_file in uploaded_files:
+            with open(temppdf , "wb") as file:
+                file.write(uploaded_file.getvalue())
+            
+            loader=PyPDFLoader(temppdf)
+            docs = loader.load()
+            documents.extend(docs)
         
-        loader=PyPDFLoader(temppdf)
-        docs = loader.load()
-        documents.extend(docs)
-    
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000 , chunk_overlap=500)
-    chunks = text_splitter.split_documents(documents)
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000 , chunk_overlap=500)
+        chunks = text_splitter.split_documents(documents)
 
-    embeddings = HuggingFaceEmbeddings(model='BAAI/bge-base-en-v1.5')
-    vectorstore = Chroma.from_documents(documents=chunks , embedding=embeddings)
+        embeddings = HuggingFaceEmbeddings(model='BAAI/bge-base-en-v1.5' , model_kwargs={
+            "token": hf_api_key
+        })
 
-    retriever = vectorstore.as_retriever()
+        vectorstore = Chroma.from_documents(documents=chunks , embedding=embeddings)
 
-    contextualize_q_system_prompt=(
-            "Given a chat history and the latest user question"
-            "which might reference context in the chat history, "
-            "formulate a standalone question which can be understood "
-            "without the chat history. Do NOT answer the question, "
-            "just reformulate it if needed and otherwise return it as is."
-        )
-    
-    contextualize_q_prompt = ChatPromptTemplate.from_messages(
-        [("system", contextualize_q_system_prompt),
-        MessagesPlaceholder("chat_history"),
-        ("human",'{input}')]
-    )
+        retriever = vectorstore.as_retriever()
 
-    history_aware_retriever = create_history_aware_retriever(llm , retriever , contextualize_q_prompt)
-
-    system_prompt = (
-                "You are an assistant for question-answering tasks. "
-                "Use the following pieces of retrieved context to answer "
-                "the question. If you don't know the answer, say that you "
-                "don't know. Use three sentences maximum and keep the "
-                "answer concise."
-                "\n\n"
-                "{context}"
+        contextualize_q_system_prompt=(
+                "Given a chat history and the latest user question"
+                "which might reference context in the chat history, "
+                "formulate a standalone question which can be understood "
+                "without the chat history. Do NOT answer the question, "
+                "just reformulate it if needed and otherwise return it as is."
             )
-    
-    qa_prompt = ChatPromptTemplate.from_messages(
-        [("system", system_prompt),
-        MessagesPlaceholder("chat_history"),
-        ("human" , '{input}')]
-    )
-
-    qa_chain = create_stuff_documents_chain(llm , qa_prompt)
-    rag_chain = create_retrieval_chain(history_aware_retriever , qa_chain)
-
-    def get_session_history(session_id : str) -> BaseChatMessageHistory:
-        if session_id not in st.session_state.store:
-            st.session_state.store[session_id] = ChatMessageHistory()
-        return st.session_state.store[session_id]
-    
-    conversational_rag_chain = RunnableWithMessageHistory(
-        rag_chain,
-        get_session_history,
-        input_messages_key="input",
-        history_messages_key="chat_history",
-        output_messages_key="answer"
-    )
-
-    user_input= st.text_input("Enter your Question")
-    if user_input:
-        session_history = get_session_history(session_id)
-        response = conversational_rag_chain.invoke(
-            {"input" : user_input},
-            config={
-                "configurable":{
-                    "session_id" : session_id
-                }
-            }
+        
+        contextualize_q_prompt = ChatPromptTemplate.from_messages(
+            [("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human",'{input}')]
         )
-        st.write("Assistant :", response['answer'])
-        # with st.expander("Document similarity Search"):
-        #     for doc in response['context']:
-        #         st.write(doc.page_content)
-        #         st.write('------------------------')
-        st.write("Chat History:" , session_history.messages)
+
+        history_aware_retriever = create_history_aware_retriever(llm , retriever , contextualize_q_prompt)
+
+        system_prompt = (
+                    "You are an assistant for question-answering tasks. "
+                    "Use the following pieces of retrieved context to answer "
+                    "the question. If you don't know the answer, say that you "
+                    "don't know. Use three sentences maximum and keep the "
+                    "answer concise."
+                    "\n\n"
+                    "{context}"
+                )
+        
+        qa_prompt = ChatPromptTemplate.from_messages(
+            [("system", system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human" , '{input}')]
+        )
+
+        qa_chain = create_stuff_documents_chain(llm , qa_prompt)
+        rag_chain = create_retrieval_chain(history_aware_retriever , qa_chain)
+
+        def get_session_history(session_id : str) -> BaseChatMessageHistory:
+            if session_id not in st.session_state.store:
+                st.session_state.store[session_id] = ChatMessageHistory()
+            return st.session_state.store[session_id]
+        
+        conversational_rag_chain = RunnableWithMessageHistory(
+            rag_chain,
+            get_session_history,
+            input_messages_key="input",
+            history_messages_key="chat_history",
+            output_messages_key="answer"
+        )
+
+        user_input= st.text_input("Enter your Question")
+        if user_input:
+            session_history = get_session_history(session_id)
+            response = conversational_rag_chain.invoke(
+                {"input" : user_input},
+                config={
+                    "configurable":{
+                        "session_id" : session_id
+                    }
+                }
+            )
+            st.write("Assistant :", response['answer'])
+            # with st.expander("Document similarity Search"):
+            #     for doc in response['context']:
+            #         st.write(doc.page_content)
+            #         st.write('------------------------')
+            st.write("Chat History:" , session_history.messages)
 
 
 
