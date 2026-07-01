@@ -161,19 +161,10 @@ Groq Llama 3.1
         ▼
 Final Answer
 ```
-
+---
 ## 📸 Demo
 
-Add screenshots or GIFs inside the `screenshots` folder.
-
-Example:
-
-```
-screenshots/
-    home.png
-    upload.png
-    chatbot.png
-```
+![Conversational RAG Chatbot](demo.png)
 
 ---
 
